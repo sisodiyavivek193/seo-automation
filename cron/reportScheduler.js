@@ -4,7 +4,7 @@ const Client = require("../models/Client");
 const Report = require("../models/Report");
 
 const sendReportEmail = require("../services/emailService");
-const { getLatestWeekHTML } = require("../services/googleDocsService"); // ✅ updated import
+const { getLatestWeekHTML } = require("../services/googleDocsService");
 const { generatePDF } = require("../services/pdfService");
 
 const { getWeeklyReportPeriod, getMonthlyReportPeriod } = require("../utils/reportPeriod");
@@ -12,27 +12,13 @@ const { getWeeklyReportPeriod, getMonthlyReportPeriod } = require("../utils/repo
 console.log("⏰ Cron Scheduler Loaded");
 
 // ─────────────────────────────────────────
-// Helper — ek client ko report bhejo
+// Helper — ek client ka report PREPARE karo (send nahi)
+// CEO approval ke baad send hoga
 // ─────────────────────────────────────────
-async function sendReportToClient(client, startDate, endDate, reportType) {
+async function prepareReportForClient(client, startDate, endDate, reportType) {
 
-    console.log(`📊 Generating report for: ${client.clientName}`);
+    console.log(`📊 Preparing report for: ${client.clientName}`);
     console.log(`📅 Period: ${startDate} → ${endDate}`);
-
-    // Already sent today check
-    if (client.lastReportSentAt) {
-        const last = new Date(client.lastReportSentAt);
-        const today = new Date();
-        const sameDay =
-            last.getDate() === today.getDate() &&
-            last.getMonth() === today.getMonth() &&
-            last.getFullYear() === today.getFullYear();
-
-        if (sameDay) {
-            console.log(`⏭️ Already sent today: ${client.clientName}`);
-            return;
-        }
-    }
 
     // Duplicate period check
     const startOfDay = new Date(startDate); startOfDay.setHours(0, 0, 0, 0);
@@ -57,48 +43,86 @@ async function sendReportToClient(client, startDate, endDate, reportType) {
             reportType,
             emailStatus: "failed",
             emailError: "Google Doc ID missing",
-            status: "failed"
+            status: "failed",
+            approvalStatus: "pending_review"
         });
         return;
     }
 
-    // Save as pending
-    const report = await Report.create({
-        clientId: client._id,
-        startDate,
-        endDate,
-        reportType,
-        emailStatus: "pending",
-        status: "generated"
-    });
-
     try {
-        // ✅ Sirf is week ka content extract karo
-        const html = await getLatestWeekHTML(client.googleDocId, startDate, endDate);
-        const filePath = await generatePDF(html, client.clientName);
+        // Google Doc se content extract karo
+        const rawHtml = await getLatestWeekHTML(client.googleDocId, startDate, endDate);
 
-        await Report.findByIdAndUpdate(report._id, { pdfPath: filePath });
-
-        await sendReportEmail(client.email, filePath, client.clientName, startDate, endDate);
-
-        await Report.findByIdAndUpdate(report._id, {
-            emailStatus: "sent",
-            emailSentAt: new Date()
+        // Report save karo — approval pending
+        const report = await Report.create({
+            clientId: client._id,
+            startDate,
+            endDate,
+            reportType,
+            emailStatus: "pending",
+            status: "generated",
+            approvalStatus: "pending_review",  // ✅ CEO review ka wait
+            rawDocContent: rawHtml             // ✅ Original content save
         });
 
-        await Client.findByIdAndUpdate(client._id, {
-            lastReportSentAt: new Date()
-        });
-
-        console.log(`📧 Report sent to: ${client.email}`);
+        console.log(`✅ Report prepared for CEO review: ${client.clientName} (ID: ${report._id})`);
 
     } catch (err) {
-        await Report.findByIdAndUpdate(report._id, {
+        console.error(`❌ Report prepare failed for ${client.clientName}:`, err.message);
+        await Report.create({
+            clientId: client._id,
+            startDate,
+            endDate,
+            reportType,
             emailStatus: "failed",
-            emailError: err.message
+            emailError: err.message,
+            status: "failed",
+            approvalStatus: "pending_review"
         });
-        console.error(`❌ Email failed for ${client.clientName}:`, err.message);
     }
+}
+
+// ─────────────────────────────────────────
+// Email send karo (approved reports ke liye)
+// Yeh function reportController se call hoga
+// ─────────────────────────────────────────
+async function sendApprovedReport(reportId) {
+    const Report = require("../models/Report");
+    const Client = require("../models/Client");
+
+    const report = await Report.findById(reportId).populate("clientId");
+    if (!report) throw new Error("Report not found");
+
+    const client = report.clientId;
+
+    // Final content — AI rewritten ya original
+    const finalContent = report.aiRewrittenContent || report.rawDocContent;
+
+    if (!finalContent) throw new Error("Report content not found");
+
+    const filePath = await generatePDF(finalContent, client.clientName);
+
+    await Report.findByIdAndUpdate(reportId, { pdfPath: filePath });
+
+    await sendReportEmail(
+        client.email,
+        filePath,
+        client.clientName,
+        report.startDate,
+        report.endDate
+    );
+
+    await Report.findByIdAndUpdate(reportId, {
+        emailStatus: "sent",
+        emailSentAt: new Date(),
+        approvalStatus: "approved"
+    });
+
+    await Client.findByIdAndUpdate(client._id, {
+        lastReportSentAt: new Date()
+    });
+
+    console.log(`📧 Approved report sent to: ${client.email}`);
 }
 
 // ─────────────────────────────────────────
@@ -117,7 +141,7 @@ cron.schedule("30 3 * * 6", async () => {
         const { startDate, endDate } = getWeeklyReportPeriod();
 
         for (const client of clients) {
-            await sendReportToClient(client, startDate, endDate, "weekly");
+            await prepareReportForClient(client, startDate, endDate, "weekly");
         }
 
     } catch (err) {
@@ -141,7 +165,7 @@ cron.schedule("30 3 3 * *", async () => {
         const { startDate, endDate } = getMonthlyReportPeriod();
 
         for (const client of clients) {
-            await sendReportToClient(client, startDate, endDate, "monthly");
+            await prepareReportForClient(client, startDate, endDate, "monthly");
         }
 
     } catch (err) {
@@ -149,13 +173,16 @@ cron.schedule("30 3 3 * *", async () => {
     }
 });
 
+module.exports = { sendApprovedReport };
+
+
 // const cron = require("node-cron");
 
 // const Client = require("../models/Client");
 // const Report = require("../models/Report");
 
 // const sendReportEmail = require("../services/emailService");
-// const getGoogleDocHTML = require("../services/googleDocsService");
+// const { getLatestWeekHTML } = require("../services/googleDocsService"); // ✅ updated import
 // const { generatePDF } = require("../services/pdfService");
 
 // const { getWeeklyReportPeriod, getMonthlyReportPeriod } = require("../utils/reportPeriod");
@@ -224,7 +251,8 @@ cron.schedule("30 3 3 * *", async () => {
 //     });
 
 //     try {
-//         const html = await getGoogleDocHTML(client.googleDocId);
+//         // ✅ Sirf is week ka content extract karo
+//         const html = await getLatestWeekHTML(client.googleDocId, startDate, endDate);
 //         const filePath = await generatePDF(html, client.clientName);
 
 //         await Report.findByIdAndUpdate(report._id, { pdfPath: filePath });
