@@ -1,165 +1,200 @@
-const axios = require("axios");
-const cheerio = require("cheerio");
+const { getLatestWeekHTML } = require("./seoSummaryService");  // Existing function
 
-async function getGoogleDocHTML(docId) {
-    const url = `https://docs.google.com/document/d/${docId}/export?format=html`;
-    const response = await axios.get(url);
-    return response.data;
-}
+// ✅ Fetch Google Doc content
+exports.fetchGoogleDocContent = async (docUrl, startDate, endDate) => {
+    try {
+        if (!docUrl) return "";
 
-async function getLatestWeekHTML(docId, startDate, endDate) {
-    const fullHTML = await getGoogleDocHTML(docId);
-    const $ = cheerio.load(fullHTML);
+        // Extract doc ID from URL
+        // Example: https://docs.google.com/document/d/1gM1Zj0d_5zSX9bZu3_RM4pF-5dE8kfGB_PMqfluch4/edit
+        const docIdMatch = docUrl.match(/\/document\/d\/([a-zA-Z0-9-_]+)/);
+        if (!docIdMatch) {
+            console.warn("⚠️ Invalid Google Doc URL:", docUrl);
+            return "";
+        }
 
-    const reportStart = new Date(startDate);
-    const reportEnd = new Date(endDate);
+        const docId = docIdMatch[1];
+        console.log(`📄 Fetching Google Doc: ${docId}`);
 
-    // DD-MM-YYYY string ko Date object mein convert karo
-    function parseDocDate(str) {
-        const match = str.match(/(\d{2})-(\d{2})-(\d{4})/);
-        if (!match) return null;
-        return new Date(`${match[3]}-${match[2]}-${match[1]}`);
+        // ✅ Use existing seoSummaryService function
+        const htmlContent = await getLatestWeekHTML(docId, startDate, endDate);
+
+        if (!htmlContent) {
+            console.warn("⚠️ No content extracted from Google Doc");
+            return "";
+        }
+
+        console.log(`✅ Google Doc fetched: ${htmlContent.length} chars`);
+        return htmlContent;
+
+    } catch (error) {
+        console.error("❌ Google Doc fetch error:", error.message);
+        return "";
     }
+};
 
-    let targetHeading = null;
+// const axios = require("axios");
+// const cheerio = require("cheerio");
 
-    // Saari headings aur paragraphs scan karo
-    $("h1, h2, h3, h4, p").each((i, el) => {
-        const text = $(el).text().trim();
+// async function getGoogleDocHTML(docId) {
+//     const url = `https://docs.google.com/document/d/${docId}/export?format=html`;
+//     const response = await axios.get(url);
+//     return response.data;
+// }
 
-        // Format match: "09-03-2026  to  13-03-2026"
-        if (text.includes(" to ") && text.match(/\d{2}-\d{2}-\d{4}/)) {
-            const parts = text.split(/\s+to\s+/);
-            if (parts.length !== 2) return;
+// async function getLatestWeekHTML(docId, startDate, endDate) {
+//     const fullHTML = await getGoogleDocHTML(docId);
+//     const $ = cheerio.load(fullHTML);
 
-            const secStart = parseDocDate(parts[0].trim());
-            const secEnd = parseDocDate(parts[1].trim());
+//     const reportStart = new Date(startDate);
+//     const reportEnd = new Date(endDate);
 
-            if (!secStart || !secEnd) return;
+//     // DD-MM-YYYY string ko Date object mein convert karo
+//     function parseDocDate(str) {
+//         const match = str.match(/(\d{2})-(\d{2})-(\d{4})/);
+//         if (!match) return null;
+//         return new Date(`${match[3]}-${match[2]}-${match[1]}`);
+//     }
 
-            // Exact match — cron ki startDate se doc heading ki startDate match karo
-            const sameStart =
-                secStart.getDate() === reportStart.getDate() &&
-                secStart.getMonth() === reportStart.getMonth() &&
-                secStart.getFullYear() === reportStart.getFullYear();
+//     let targetHeading = null;
 
-            // Ya range overlap check
-            const overlap = secStart >= reportStart && secEnd <= reportEnd;
+//     // Saari headings aur paragraphs scan karo
+//     $("h1, h2, h3, h4, p").each((i, el) => {
+//         const text = $(el).text().trim();
 
-            if (sameStart || overlap) {
-                targetHeading = el;
-                return false; // loop band karo
-            }
-        }
-    });
+//         // Format match: "09-03-2026  to  13-03-2026"
+//         if (text.includes(" to ") && text.match(/\d{2}-\d{2}-\d{4}/)) {
+//             const parts = text.split(/\s+to\s+/);
+//             if (parts.length !== 2) return;
 
-    let sectionHTML = "";
+//             const secStart = parseDocDate(parts[0].trim());
+//             const secEnd = parseDocDate(parts[1].trim());
 
-    if (targetHeading) {
-        console.log(`✅ Matching section found: ${$(targetHeading).text().trim()}`);
+//             if (!secStart || !secEnd) return;
 
-        // Heading ka HTML
-        sectionHTML += $.html(targetHeading);
+//             // Exact match — cron ki startDate se doc heading ki startDate match karo
+//             const sameStart =
+//                 secStart.getDate() === reportStart.getDate() &&
+//                 secStart.getMonth() === reportStart.getMonth() &&
+//                 secStart.getFullYear() === reportStart.getFullYear();
 
-        // Heading ke baad ka content — next date heading tak
-        let next = $(targetHeading).next();
-        while (next.length) {
-            const text = next.text().trim();
+//             // Ya range overlap check
+//             const overlap = secStart >= reportStart && secEnd <= reportEnd;
 
-            // Agar next element bhi date heading hai toh rok do
-            if (
-                text.includes(" to ") &&
-                text.match(/\d{2}-\d{2}-\d{4}/) &&
-                (next.is("h1") || next.is("h2") || next.is("h3") || next.is("h4") || next.is("p"))
-            ) {
-                break;
-            }
+//             if (sameStart || overlap) {
+//                 targetHeading = el;
+//                 return false; // loop band karo
+//             }
+//         }
+//     });
 
-            sectionHTML += $.html(next);
-            next = next.next();
-        }
-    } else {
-        // Fallback: doc ki pehli heading ka content use karo
-        console.log("⚠️ Matching section not found — using first section as fallback");
+//     let sectionHTML = "";
 
-        const firstHeading = $("h1, h2, h3, h4, p").filter((i, el) => {
-            const text = $(el).text().trim();
-            return text.includes(" to ") && text.match(/\d{2}-\d{2}-\d{4}/);
-        }).first();
+//     if (targetHeading) {
+//         console.log(`✅ Matching section found: ${$(targetHeading).text().trim()}`);
 
-        if (firstHeading.length) {
-            sectionHTML += $.html(firstHeading);
-            let next = firstHeading.next();
-            while (next.length) {
-                const text = next.text().trim();
-                if (
-                    text.includes(" to ") &&
-                    text.match(/\d{2}-\d{2}-\d{4}/)
-                ) break;
-                sectionHTML += $.html(next);
-                next = next.next();
-            }
-        } else {
-            // Koi bhi section nahi mila — pura doc use karo
-            console.log("⚠️ No date sections found — using full document");
-            sectionHTML = $("body").html();
-        }
-    }
+//         // Heading ka HTML
+//         sectionHTML += $.html(targetHeading);
 
-    // Final HTML with styling
-    return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <meta charset="UTF-8">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            padding: 40px;
-            color: #333;
-            line-height: 1.7;
-            font-size: 14px;
-        }
-        h1, h2, h3, h4 {
-            color: #1a73e8;
-            margin-top: 20px;
-            margin-bottom: 10px;
-        }
-        p { margin-bottom: 10px; }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 16px 0;
-        }
-        td, th {
-            border: 1px solid #ddd;
-            padding: 10px;
-            text-align: left;
-        }
-        th { background: #f0f5ff; font-weight: bold; }
-        tr:nth-child(even) { background: #f9f9f9; }
-        img { max-width: 100%; height: auto; }
-        ul, ol { padding-left: 20px; margin-bottom: 10px; }
-        li { margin-bottom: 4px; }
-        .report-header {
-            border-bottom: 2px solid #1a73e8;
-            padding-bottom: 12px;
-            margin-bottom: 24px;
-        }
-        .report-title {
-            font-size: 20px;
-            font-weight: bold;
-            color: #1a73e8;
-        }
-    </style>
-    </head>
-    <body>
-        <div class="report-header">
-            <div class="report-title">📊 SEO Performance Report</div>
-        </div>
-        ${sectionHTML}
-    </body>
-    </html>`;
-}
+//         // Heading ke baad ka content — next date heading tak
+//         let next = $(targetHeading).next();
+//         while (next.length) {
+//             const text = next.text().trim();
 
-module.exports = { getGoogleDocHTML, getLatestWeekHTML };
+//             // Agar next element bhi date heading hai toh rok do
+//             if (
+//                 text.includes(" to ") &&
+//                 text.match(/\d{2}-\d{2}-\d{4}/) &&
+//                 (next.is("h1") || next.is("h2") || next.is("h3") || next.is("h4") || next.is("p"))
+//             ) {
+//                 break;
+//             }
+
+//             sectionHTML += $.html(next);
+//             next = next.next();
+//         }
+//     } else {
+//         // Fallback: doc ki pehli heading ka content use karo
+//         console.log("⚠️ Matching section not found — using first section as fallback");
+
+//         const firstHeading = $("h1, h2, h3, h4, p").filter((i, el) => {
+//             const text = $(el).text().trim();
+//             return text.includes(" to ") && text.match(/\d{2}-\d{2}-\d{4}/);
+//         }).first();
+
+//         if (firstHeading.length) {
+//             sectionHTML += $.html(firstHeading);
+//             let next = firstHeading.next();
+//             while (next.length) {
+//                 const text = next.text().trim();
+//                 if (
+//                     text.includes(" to ") &&
+//                     text.match(/\d{2}-\d{2}-\d{4}/)
+//                 ) break;
+//                 sectionHTML += $.html(next);
+//                 next = next.next();
+//             }
+//         } else {
+//             // Koi bhi section nahi mila — pura doc use karo
+//             console.log("⚠️ No date sections found — using full document");
+//             sectionHTML = $("body").html();
+//         }
+//     }
+
+//     // Final HTML with styling
+//     return `
+//     <!DOCTYPE html>
+//     <html>
+//     <head>
+//     <meta charset="UTF-8">
+//     <style>
+//         body {
+//             font-family: Arial, sans-serif;
+//             padding: 40px;
+//             color: #333;
+//             line-height: 1.7;
+//             font-size: 14px;
+//         }
+//         h1, h2, h3, h4 {
+//             color: #1a73e8;
+//             margin-top: 20px;
+//             margin-bottom: 10px;
+//         }
+//         p { margin-bottom: 10px; }
+//         table {
+//             width: 100%;
+//             border-collapse: collapse;
+//             margin: 16px 0;
+//         }
+//         td, th {
+//             border: 1px solid #ddd;
+//             padding: 10px;
+//             text-align: left;
+//         }
+//         th { background: #f0f5ff; font-weight: bold; }
+//         tr:nth-child(even) { background: #f9f9f9; }
+//         img { max-width: 100%; height: auto; }
+//         ul, ol { padding-left: 20px; margin-bottom: 10px; }
+//         li { margin-bottom: 4px; }
+//         .report-header {
+//             border-bottom: 2px solid #1a73e8;
+//             padding-bottom: 12px;
+//             margin-bottom: 24px;
+//         }
+//         .report-title {
+//             font-size: 20px;
+//             font-weight: bold;
+//             color: #1a73e8;
+//         }
+//     </style>
+//     </head>
+//     <body>
+//         <div class="report-header">
+//             <div class="report-title">📊 SEO Performance Report</div>
+//         </div>
+//         ${sectionHTML}
+//     </body>
+//     </html>`;
+// }
+
+// module.exports = { getGoogleDocHTML, getLatestWeekHTML };

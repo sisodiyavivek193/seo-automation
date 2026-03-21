@@ -1,14 +1,13 @@
 const path = require("path");
 const fs = require("fs");
 const Report = require("../models/Report");
+const Client = require("../models/Client");
 const mongoose = require("mongoose");
 const { rewriteWithAI } = require("../services/aiService");
 const { sendApprovedReport } = require("../cron/reportScheduler");
+const { fetchGoogleDocContent } = require("../services/googleDocsService");
 
-const { fetchGoogleDocContent } = require("../services/googleDocService");
-const Client = require("../models/Client");
-
-// ✅ POST - Create report SIMPLIFIED (no rawDocContent input!)
+// ✅ POST - Create report SIMPLIFIED
 exports.createReport = async (req, res) => {
     try {
         const {
@@ -16,7 +15,6 @@ exports.createReport = async (req, res) => {
             startDate,
             endDate,
             reportType
-            // ❌ NO rawDocContent, NO aiSummary, NO traffic/keywords/backlinks
         } = req.body;
 
         if (!clientId) return res.status(400).json({ message: "clientId required hai" });
@@ -29,36 +27,35 @@ exports.createReport = async (req, res) => {
         const client = await Client.findById(clientId);
         if (!client) return res.status(404).json({ message: "Client nahi mila" });
 
-        // Create report (without content)
+        if (!client.googleDocsUrl) {
+            return res.status(400).json({ message: "Client ke paas Google Docs URL nahi hai" });
+        }
+
+        // Create report
         const report = await Report.create({
             clientId,
             startDate,
             endDate,
             reportType: reportType || "weekly",
-            googleDocsUrl: client.googleDocsUrl,  // ✅ Store URL
+            googleDocsUrl: client.googleDocsUrl,
             emailStatus: "pending",
             approvalStatus: "pending_review"
         });
 
-        // ✅ ASYNC: Fetch Google Doc content in background
-        if (client.googleDocsUrl) {
-            try {
-                const htmlContent = await fetchGoogleDocContent(
-                    client.googleDocsUrl,
-                    startDate,
-                    endDate
-                );
+        console.log(`✅ Report created: ${report._id}`);
 
+        // ✅ ASYNC: Fetch Google Doc content in background
+        fetchGoogleDocContent(client.googleDocsUrl, startDate, endDate)
+            .then(htmlContent => {
                 if (htmlContent) {
-                    await Report.findByIdAndUpdate(report._id, {
+                    return Report.findByIdAndUpdate(report._id, {
                         rawDocContent: htmlContent
                     });
-                    console.log(`✅ Report ${report._id} - Google Doc content fetched!`);
                 }
-            } catch (err) {
+            })
+            .catch(err => {
                 console.error(`⚠️ Report ${report._id} - Google Doc fetch failed:`, err.message);
-            }
-        }
+            });
 
         res.status(201).json(report);
     } catch (error) {
@@ -67,47 +64,27 @@ exports.createReport = async (req, res) => {
     }
 };
 
-// ✅ GET - Preview (Auto-fetch if content missing)
-exports.getReportPreview = async (req, res) => {
+// GET all reports (with optional filters)
+exports.getReports = async (req, res) => {
     try {
-        const { id } = req.params;
-        if (!mongoose.Types.ObjectId.isValid(id))
-            return res.status(400).json({ message: "Report ID valid nahi hai" });
+        const { from, to, status, clientId, approvalStatus } = req.query;
+        const filter = {};
 
-        let report = await Report.findById(id).populate("clientId");
-        if (!report) return res.status(404).json({ message: "Report nahi mila" });
-
-        // ✅ If content not cached, fetch now
-        if (!report.rawDocContent && report.googleDocsUrl) {
-            const htmlContent = await fetchGoogleDocContent(
-                report.googleDocsUrl,
-                report.startDate,
-                report.endDate
-            );
-
-            if (htmlContent) {
-                report = await Report.findByIdAndUpdate(
-                    id,
-                    { rawDocContent: htmlContent },
-                    { new: true }
-                ).populate("clientId");
-            }
+        if (from || to) {
+            filter.reportDate = {};
+            if (from) filter.reportDate.$gte = new Date(from);
+            if (to) filter.reportDate.$lte = new Date(new Date(to).setHours(23, 59, 59, 999));
         }
+        if (status) filter.emailStatus = status;
+        if (approvalStatus) filter.approvalStatus = approvalStatus;
+        if (clientId && mongoose.Types.ObjectId.isValid(clientId)) filter.clientId = clientId;
 
-        res.json({
-            _id: report._id,
-            clientName: report.clientId?.clientName,
-            startDate: report.startDate,
-            endDate: report.endDate,
-            reportType: report.reportType,
-            approvalStatus: report.approvalStatus,
-            rawDocContent: report.rawDocContent || "<p>⚠️ Document content load nahi ho saki</p>",
-            aiRewrittenContent: report.aiRewrittenContent,
-            ceoPrompt: report.ceoPrompt,
-            emailStatus: report.emailStatus
-        });
+        const reports = await Report.find(filter)
+            .populate("clientId")
+            .sort({ createdAt: -1 });
+
+        res.json(reports);
     } catch (error) {
-        console.error("getReportPreview error:", error);
         res.status(500).json({ message: error.message });
     }
 };
@@ -119,7 +96,7 @@ exports.getReportsByClient = async (req, res) => {
         if (!mongoose.Types.ObjectId.isValid(id))
             return res.status(400).json({ message: "Client ID valid nahi hai" });
 
-        const reports = await Report.find({ clientId: id }).sort({ createdAt: -1 });  // ✅ IMPROVED: Latest first
+        const reports = await Report.find({ clientId: id }).sort({ createdAt: -1 });
         res.json(reports);
     } catch (error) {
         res.status(500).json({ message: "Server error" });
@@ -170,7 +147,6 @@ exports.getStats = async (req, res) => {
             { $sort: { "_id.date": 1 } }
         ]);
 
-        // Approval stats
         const pendingReview = await Report.countDocuments({ approvalStatus: "pending_review" });
         const awaitingApproval = await Report.countDocuments({ approvalStatus: "awaiting_approval" });
 
@@ -205,19 +181,33 @@ exports.downloadReport = async (req, res) => {
     }
 };
 
-// ✅ GET - Preview report content (raw doc content + AI content)
+// ✅ GET - Preview report content
 exports.getReportPreview = async (req, res) => {
     try {
         const { id } = req.params;
         if (!mongoose.Types.ObjectId.isValid(id))
             return res.status(400).json({ message: "Report ID valid nahi hai" });
 
-        const report = await Report.findById(id).populate("clientId");
+        let report = await Report.findById(id).populate("clientId");
         if (!report) return res.status(404).json({ message: "Report nahi mila" });
 
-        // ✅ IMPROVED: Log if content is missing
-        if (!report.rawDocContent) {
-            console.warn(`⚠️ Report ${id} has no rawDocContent - ensure it's sent during creation`);
+        // ✅ If content not cached, fetch now
+        if (!report.rawDocContent && report.googleDocsUrl) {
+            console.log(`📄 Fetching content for report ${id}...`);
+            const htmlContent = await fetchGoogleDocContent(
+                report.googleDocsUrl,
+                report.startDate,
+                report.endDate
+            );
+
+            if (htmlContent) {
+                report = await Report.findByIdAndUpdate(
+                    id,
+                    { rawDocContent: htmlContent },
+                    { new: true }
+                ).populate("clientId");
+                console.log(`✅ Content fetched and cached`);
+            }
         }
 
         res.json({
@@ -227,12 +217,13 @@ exports.getReportPreview = async (req, res) => {
             endDate: report.endDate,
             reportType: report.reportType,
             approvalStatus: report.approvalStatus,
-            rawDocContent: report.rawDocContent || "<p>⚠️ Document content not available. Please re-create the report with Google Doc content.</p>",  // ✅ IMPROVED: Better error message
+            rawDocContent: report.rawDocContent || "<p style='color: orange;'>⚠️ Document content load nahi ho saki. Agar problem hai toh report ko dobara create karo.</p>",
             aiRewrittenContent: report.aiRewrittenContent,
             ceoPrompt: report.ceoPrompt,
             emailStatus: report.emailStatus
         });
     } catch (error) {
+        console.error("getReportPreview error:", error);
         res.status(500).json({ message: error.message });
     }
 };
@@ -252,7 +243,7 @@ exports.rewriteWithAI = async (req, res) => {
         if (!report) return res.status(404).json({ message: "Report nahi mila" });
 
         if (!report.rawDocContent)
-            return res.status(400).json({ message: "Report ka original content nahi mila - report ke saath content save karna zaroori hai" });
+            return res.status(400).json({ message: "Report ka original content nahi mila" });
 
         // Status update — rewriting
         await Report.findByIdAndUpdate(id, {
@@ -276,7 +267,6 @@ exports.rewriteWithAI = async (req, res) => {
 
     } catch (error) {
         console.error("AI rewrite error:", error);
-        // Reset status on error
         await Report.findByIdAndUpdate(req.params.id, {
             approvalStatus: "pending_review"
         });
@@ -284,7 +274,7 @@ exports.rewriteWithAI = async (req, res) => {
     }
 };
 
-// ✅ POST - CEO approve kare — email send ho
+// ✅ POST - CEO approve kare
 exports.approveReport = async (req, res) => {
     try {
         const { id } = req.params;
@@ -321,7 +311,7 @@ exports.rejectReport = async (req, res) => {
             approvalStatus: "pending_review",
             rejectedAt: new Date(),
             rejectionReason: reason || "",
-            aiRewrittenContent: ""  // Reset so CEO can try again
+            aiRewrittenContent: ""
         });
 
         res.json({ message: "Report rejected — CEO dobara try kar sakta hai" });
