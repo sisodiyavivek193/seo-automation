@@ -8,7 +8,8 @@ const clientSchema = new mongoose.Schema({
     },
 
     website: String,
-
+    // ✅ NEW: Store Google Docs URL
+    googleDocsUrl: { type: String, default: "" },
     email: {
         type: String,
         required: true

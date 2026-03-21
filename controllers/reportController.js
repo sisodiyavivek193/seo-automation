@@ -5,43 +5,61 @@ const mongoose = require("mongoose");
 const { rewriteWithAI } = require("../services/aiService");
 const { sendApprovedReport } = require("../cron/reportScheduler");
 
-// POST - create report manually (with rawDocContent from Google Doc)
+const { fetchGoogleDocContent } = require("../services/googleDocService");
+const Client = require("../models/Client");
+
+// ✅ POST - Create report SIMPLIFIED (no rawDocContent input!)
 exports.createReport = async (req, res) => {
     try {
         const {
             clientId,
             startDate,
             endDate,
-            traffic,
-            keywords,
-            backlinks,
-            aiSummary,
-            reportType,
-            rawDocContent  // ✅ NEW: Accept Google Doc HTML content
+            reportType
+            // ❌ NO rawDocContent, NO aiSummary, NO traffic/keywords/backlinks
         } = req.body;
 
-        if (!clientId)
-            return res.status(400).json({ message: "clientId required hai" });
+        if (!clientId) return res.status(400).json({ message: "clientId required hai" });
         if (!mongoose.Types.ObjectId.isValid(clientId))
             return res.status(400).json({ message: "clientId valid nahi hai" });
         if (!startDate || !endDate)
             return res.status(400).json({ message: "startDate aur endDate required hain" });
 
+        // ✅ Fetch client ka Google Docs URL
+        const client = await Client.findById(clientId);
+        if (!client) return res.status(404).json({ message: "Client nahi mila" });
+
+        // Create report (without content)
         const report = await Report.create({
             clientId,
             startDate,
             endDate,
             reportType: reportType || "weekly",
-            traffic: traffic || 0,
-            keywords: keywords || 0,
-            backlinks: backlinks || 0,
-            aiSummary: aiSummary || "",
-            rawDocContent: rawDocContent || "",  // ✅ NEW: Save raw document content
+            googleDocsUrl: client.googleDocsUrl,  // ✅ Store URL
             emailStatus: "pending",
             approvalStatus: "pending_review"
         });
 
-        console.log(`✅ Report created for client ${clientId} with content length: ${(rawDocContent || '').length} chars`);
+        // ✅ ASYNC: Fetch Google Doc content in background
+        if (client.googleDocsUrl) {
+            try {
+                const htmlContent = await fetchGoogleDocContent(
+                    client.googleDocsUrl,
+                    startDate,
+                    endDate
+                );
+
+                if (htmlContent) {
+                    await Report.findByIdAndUpdate(report._id, {
+                        rawDocContent: htmlContent
+                    });
+                    console.log(`✅ Report ${report._id} - Google Doc content fetched!`);
+                }
+            } catch (err) {
+                console.error(`⚠️ Report ${report._id} - Google Doc fetch failed:`, err.message);
+            }
+        }
+
         res.status(201).json(report);
     } catch (error) {
         console.error("Report create error:", error);
@@ -49,27 +67,47 @@ exports.createReport = async (req, res) => {
     }
 };
 
-// GET all reports (with optional filters)
-exports.getReports = async (req, res) => {
+// ✅ GET - Preview (Auto-fetch if content missing)
+exports.getReportPreview = async (req, res) => {
     try {
-        const { from, to, status, clientId, approvalStatus } = req.query;
-        const filter = {};
+        const { id } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(id))
+            return res.status(400).json({ message: "Report ID valid nahi hai" });
 
-        if (from || to) {
-            filter.reportDate = {};
-            if (from) filter.reportDate.$gte = new Date(from);
-            if (to) filter.reportDate.$lte = new Date(new Date(to).setHours(23, 59, 59, 999));
+        let report = await Report.findById(id).populate("clientId");
+        if (!report) return res.status(404).json({ message: "Report nahi mila" });
+
+        // ✅ If content not cached, fetch now
+        if (!report.rawDocContent && report.googleDocsUrl) {
+            const htmlContent = await fetchGoogleDocContent(
+                report.googleDocsUrl,
+                report.startDate,
+                report.endDate
+            );
+
+            if (htmlContent) {
+                report = await Report.findByIdAndUpdate(
+                    id,
+                    { rawDocContent: htmlContent },
+                    { new: true }
+                ).populate("clientId");
+            }
         }
-        if (status) filter.emailStatus = status;
-        if (approvalStatus) filter.approvalStatus = approvalStatus;
-        if (clientId && mongoose.Types.ObjectId.isValid(clientId)) filter.clientId = clientId;
 
-        const reports = await Report.find(filter)
-            .populate("clientId")
-            .sort({ createdAt: -1 });  // ✅ IMPROVED: Sort by creation date (latest first)
-
-        res.json(reports);
+        res.json({
+            _id: report._id,
+            clientName: report.clientId?.clientName,
+            startDate: report.startDate,
+            endDate: report.endDate,
+            reportType: report.reportType,
+            approvalStatus: report.approvalStatus,
+            rawDocContent: report.rawDocContent || "<p>⚠️ Document content load nahi ho saki</p>",
+            aiRewrittenContent: report.aiRewrittenContent,
+            ceoPrompt: report.ceoPrompt,
+            emailStatus: report.emailStatus
+        });
     } catch (error) {
+        console.error("getReportPreview error:", error);
         res.status(500).json({ message: error.message });
     }
 };

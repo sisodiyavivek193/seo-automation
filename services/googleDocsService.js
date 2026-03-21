@@ -163,26 +163,3 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
 }
 
 module.exports = { getGoogleDocHTML, getLatestWeekHTML };
-
-// const axios = require("axios");
-
-// async function getGoogleDocHTML(docId) {
-
-//     try {
-
-//         const url = `https://docs.google.com/document/d/${docId}/export?format=html`;
-
-//         const response = await axios.get(url);
-
-//         return response.data;
-
-//     } catch (error) {
-
-//         console.error("Google Doc fetch error:", error.message);
-//         throw error;
-
-//     }
-
-// }
-
-// module.exports = getGoogleDocHTML;
