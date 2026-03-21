@@ -4,7 +4,7 @@ const Client = require("../models/Client");
 const Report = require("../models/Report");
 
 const sendReportEmail = require("../services/emailService");
-const { getLatestWeekHTML } = require("../services/googleDocsService");
+const { getLatestWeekHTML } = require("../services/seoSummaryService");
 const { generatePDF } = require("../services/pdfService");
 
 const { getWeeklyReportPeriod, getMonthlyReportPeriod } = require("../utils/reportPeriod");
