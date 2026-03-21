@@ -112,22 +112,27 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
             console.log("⚠️ No exact match — trying fallback...");
 
             if (foundSections.length > 0) {
-                // Use latest section as fallback
+                // ✅ Use ONLY latest section (last one)
                 const latestSection = foundSections[foundSections.length - 1];
-                console.log(`✅ Fallback: Using latest section: ${latestSection.text}`);
+                console.log(`✅ Fallback: Using LATEST section ONLY: ${latestSection.text}`);
 
                 sectionHTML += $.html(latestSection.element);
 
                 let next = $(latestSection.element).next();
                 while (next.length) {
                     const text = next.text().trim();
-                    if (text.includes(" to ") && text.match(/\d{2}-\d{2}-\d{4}/)) break;
+                    // Stop at next date section
+                    if (text.includes(" to ") && text.match(/\d{2}-\d{2}-\d{4}/)) {
+                        console.log(`🛑 Stopping at next section`);
+                        break;
+                    }
                     sectionHTML += $.html(next);
                     next = next.next();
                 }
             } else {
-                console.log("⚠️ No date sections found — using full document");
-                sectionHTML = $("body").html();
+                // ✅ If no date sections, return empty (don't include full doc)
+                console.log("⚠️ No date sections found — returning empty");
+                sectionHTML = "";
             }
         }
 
