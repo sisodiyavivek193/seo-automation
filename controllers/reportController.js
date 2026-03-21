@@ -5,7 +5,7 @@ const Client = require("../models/Client");
 const mongoose = require("mongoose");
 const { rewriteWithAI } = require("../services/aiService");
 const { sendApprovedReport } = require("../cron/reportScheduler");
-const { fetchGoogleDocContent } = require("../services/seoSummaryService");
+const { getLatestWeekHTML } = require("../services/seoSummaryService");
 
 // ✅ POST - Create report SIMPLIFIED
 exports.createReport = async (req, res) => {
@@ -44,7 +44,7 @@ exports.createReport = async (req, res) => {
         console.log(`✅ Report created: ${report._id}`);
 
         // ✅ ASYNC: Fetch Google Doc content in background
-        fetchGoogleDocContent(client.googleDocId, startDate, endDate)  // ✅ CHANGED
+        getLatestWeekHTML(client.googleDocId, startDate, endDate)  // ✅ CHANGED
             .then(htmlContent => {
                 if (htmlContent) {
                     return Report.findByIdAndUpdate(report._id, {
@@ -192,7 +192,7 @@ exports.getReportPreview = async (req, res) => {
         // ✅ If content not cached, fetch now
         if (!report.rawDocContent && report.googleDocId) {  // ✅ CHANGED
             console.log(`📄 Fetching content for report ${id}...`);
-            const htmlContent = await fetchGoogleDocContent(
+            const htmlContent = await getLatestWeekHTML(
                 report.googleDocId,  // ✅ CHANGED
                 report.startDate,
                 report.endDate
