@@ -8,7 +8,7 @@ const reportSchema = new mongoose.Schema({
     },
 
     // ✅ NEW: Store Google Docs URL
-    googleDocsUrl: { type: String, default: "" },
+    googleDocId: { type: String, default: "" },
 
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },

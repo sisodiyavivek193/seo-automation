@@ -1,23 +1,20 @@
-const { getLatestWeekHTML } = require("./seoSummaryService");  // Existing function
+const { getLatestWeekHTML } = require("./seoSummaryService");
 
-// ✅ Fetch Google Doc content
-exports.fetchGoogleDocContent = async (docUrl, startDate, endDate) => {
+// ✅ Accept docId directly (no URL parsing needed)
+exports.fetchGoogleDocContent = async (docId, startDate, endDate) => {
     try {
-        if (!docUrl) return "";
+        if (!docId) return "";
 
-        // Extract doc ID from URL
-        // Example: https://docs.google.com/document/d/1gM1Zj0d_5zSX9bZu3_RM4pF-5dE8kfGB_PMqfluch4/edit
-        const docIdMatch = docUrl.match(/\/document\/d\/([a-zA-Z0-9-_]+)/);
-        if (!docIdMatch) {
-            console.warn("⚠️ Invalid Google Doc URL:", docUrl);
-            return "";
+        // ✅ If URL passed, extract ID
+        let actualDocId = docId;
+        if (docId.includes('/document/d/')) {
+            const match = docId.match(/\/document\/d\/([a-zA-Z0-9-_]+)/);
+            actualDocId = match ? match[1] : docId;
         }
 
-        const docId = docIdMatch[1];
-        console.log(`📄 Fetching Google Doc: ${docId}`);
+        console.log(`📄 Fetching Google Doc: ${actualDocId}`);
 
-        // ✅ Use existing seoSummaryService function
-        const htmlContent = await getLatestWeekHTML(docId, startDate, endDate);
+        const htmlContent = await getLatestWeekHTML(actualDocId, startDate, endDate);
 
         if (!htmlContent) {
             console.warn("⚠️ No content extracted from Google Doc");
