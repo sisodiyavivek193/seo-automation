@@ -5,7 +5,7 @@ const Client = require("../models/Client");
 const mongoose = require("mongoose");
 const { rewriteWithAI } = require("../services/aiService");
 const { sendApprovedReport } = require("../cron/reportScheduler");
-const { fetchGoogleDocContent } = require("../services/googleDocsService");
+const { fetchGoogleDocContent } = require("../services/seoSummaryService");
 
 // ✅ POST - Create report SIMPLIFIED
 exports.createReport = async (req, res) => {
