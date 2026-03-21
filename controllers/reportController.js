@@ -7,6 +7,7 @@ const { rewriteWithAI } = require("../services/aiService");
 const { sendApprovedReport } = require("../cron/reportScheduler");
 const { fetchGoogleDocContent } = require("../services/googleDocsService");
 
+// ✅ POST - Create report SIMPLIFIED
 exports.createReport = async (req, res) => {
     try {
         const {
@@ -62,49 +63,27 @@ exports.createReport = async (req, res) => {
     }
 };
 
-// ✅ GET - Preview report content
-exports.getReportPreview = async (req, res) => {
+// GET all reports (with optional filters)
+exports.getReports = async (req, res) => {
     try {
-        const { id } = req.params;
-        if (!mongoose.Types.ObjectId.isValid(id))
-            return res.status(400).json({ message: "Report ID valid nahi hai" });
+        const { from, to, status, clientId, approvalStatus } = req.query;
+        const filter = {};
 
-        let report = await Report.findById(id).populate("clientId");
-        if (!report) return res.status(404).json({ message: "Report nahi mila" });
-
-        // ✅ If content not cached, fetch now
-        if (!report.rawDocContent && report.googleDocId) {  // ✅ CHANGED
-            console.log(`📄 Fetching content for report ${id}...`);
-            const htmlContent = await fetchGoogleDocContent(
-                report.googleDocId,  // ✅ CHANGED
-                report.startDate,
-                report.endDate
-            );
-
-            if (htmlContent) {
-                report = await Report.findByIdAndUpdate(
-                    id,
-                    { rawDocContent: htmlContent },
-                    { new: true }
-                ).populate("clientId");
-                console.log(`✅ Content fetched and cached`);
-            }
+        if (from || to) {
+            filter.reportDate = {};
+            if (from) filter.reportDate.$gte = new Date(from);
+            if (to) filter.reportDate.$lte = new Date(new Date(to).setHours(23, 59, 59, 999));
         }
+        if (status) filter.emailStatus = status;
+        if (approvalStatus) filter.approvalStatus = approvalStatus;
+        if (clientId && mongoose.Types.ObjectId.isValid(clientId)) filter.clientId = clientId;
 
-        res.json({
-            _id: report._id,
-            clientName: report.clientId?.clientName,
-            startDate: report.startDate,
-            endDate: report.endDate,
-            reportType: report.reportType,
-            approvalStatus: report.approvalStatus,
-            rawDocContent: report.rawDocContent || "<p style='color: orange;'>⚠️ Document content load nahi ho saki.</p>",
-            aiRewrittenContent: report.aiRewrittenContent,
-            ceoPrompt: report.ceoPrompt,
-            emailStatus: report.emailStatus
-        });
+        const reports = await Report.find(filter)
+            .populate("clientId")
+            .sort({ createdAt: -1 });
+
+        res.json(reports);
     } catch (error) {
-        console.error("getReportPreview error:", error);
         res.status(500).json({ message: error.message });
     }
 };
@@ -201,7 +180,6 @@ exports.downloadReport = async (req, res) => {
     }
 };
 
-// ✅ GET - Preview report content
 exports.getReportPreview = async (req, res) => {
     try {
         const { id } = req.params;
@@ -212,10 +190,10 @@ exports.getReportPreview = async (req, res) => {
         if (!report) return res.status(404).json({ message: "Report nahi mila" });
 
         // ✅ If content not cached, fetch now
-        if (!report.rawDocContent && report.googleDocsUrl) {
+        if (!report.rawDocContent && report.googleDocId) {  // ✅ CHANGED
             console.log(`📄 Fetching content for report ${id}...`);
             const htmlContent = await fetchGoogleDocContent(
-                report.googleDocsUrl,
+                report.googleDocId,  // ✅ CHANGED
                 report.startDate,
                 report.endDate
             );
@@ -237,7 +215,7 @@ exports.getReportPreview = async (req, res) => {
             endDate: report.endDate,
             reportType: report.reportType,
             approvalStatus: report.approvalStatus,
-            rawDocContent: report.rawDocContent || "<p style='color: orange;'>⚠️ Document content load nahi ho saki. Agar problem hai toh report ko dobara create karo.</p>",
+            rawDocContent: report.rawDocContent || "<p style='color: orange;'>⚠️ Document content load nahi ho saki.</p>",
             aiRewrittenContent: report.aiRewrittenContent,
             ceoPrompt: report.ceoPrompt,
             emailStatus: report.emailStatus
