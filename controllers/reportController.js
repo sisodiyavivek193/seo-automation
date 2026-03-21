@@ -7,7 +7,6 @@ const { rewriteWithAI } = require("../services/aiService");
 const { sendApprovedReport } = require("../cron/reportScheduler");
 const { fetchGoogleDocContent } = require("../services/googleDocsService");
 
-// ✅ POST - Create report SIMPLIFIED
 exports.createReport = async (req, res) => {
     try {
         const {
@@ -23,21 +22,20 @@ exports.createReport = async (req, res) => {
         if (!startDate || !endDate)
             return res.status(400).json({ message: "startDate aur endDate required hain" });
 
-        // ✅ Fetch client ka Google Docs URL
         const client = await Client.findById(clientId);
         if (!client) return res.status(404).json({ message: "Client nahi mila" });
 
-        if (!client.googleDocsUrl) {
-            return res.status(400).json({ message: "Client ke paas Google Docs URL nahi hai" });
+        // ✅ CHANGED: use googleDocId
+        if (!client.googleDocId) {
+            return res.status(400).json({ message: "Client ke paas Google Doc ID nahi hai" });
         }
 
-        // Create report
         const report = await Report.create({
             clientId,
             startDate,
             endDate,
             reportType: reportType || "weekly",
-            googleDocsUrl: client.googleDocsUrl,
+            googleDocId: client.googleDocId,  // ✅ CHANGED
             emailStatus: "pending",
             approvalStatus: "pending_review"
         });
@@ -45,7 +43,7 @@ exports.createReport = async (req, res) => {
         console.log(`✅ Report created: ${report._id}`);
 
         // ✅ ASYNC: Fetch Google Doc content in background
-        fetchGoogleDocContent(client.googleDocsUrl, startDate, endDate)
+        fetchGoogleDocContent(client.googleDocId, startDate, endDate)  // ✅ CHANGED
             .then(htmlContent => {
                 if (htmlContent) {
                     return Report.findByIdAndUpdate(report._id, {
@@ -64,27 +62,49 @@ exports.createReport = async (req, res) => {
     }
 };
 
-// GET all reports (with optional filters)
-exports.getReports = async (req, res) => {
+// ✅ GET - Preview report content
+exports.getReportPreview = async (req, res) => {
     try {
-        const { from, to, status, clientId, approvalStatus } = req.query;
-        const filter = {};
+        const { id } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(id))
+            return res.status(400).json({ message: "Report ID valid nahi hai" });
 
-        if (from || to) {
-            filter.reportDate = {};
-            if (from) filter.reportDate.$gte = new Date(from);
-            if (to) filter.reportDate.$lte = new Date(new Date(to).setHours(23, 59, 59, 999));
+        let report = await Report.findById(id).populate("clientId");
+        if (!report) return res.status(404).json({ message: "Report nahi mila" });
+
+        // ✅ If content not cached, fetch now
+        if (!report.rawDocContent && report.googleDocId) {  // ✅ CHANGED
+            console.log(`📄 Fetching content for report ${id}...`);
+            const htmlContent = await fetchGoogleDocContent(
+                report.googleDocId,  // ✅ CHANGED
+                report.startDate,
+                report.endDate
+            );
+
+            if (htmlContent) {
+                report = await Report.findByIdAndUpdate(
+                    id,
+                    { rawDocContent: htmlContent },
+                    { new: true }
+                ).populate("clientId");
+                console.log(`✅ Content fetched and cached`);
+            }
         }
-        if (status) filter.emailStatus = status;
-        if (approvalStatus) filter.approvalStatus = approvalStatus;
-        if (clientId && mongoose.Types.ObjectId.isValid(clientId)) filter.clientId = clientId;
 
-        const reports = await Report.find(filter)
-            .populate("clientId")
-            .sort({ createdAt: -1 });
-
-        res.json(reports);
+        res.json({
+            _id: report._id,
+            clientName: report.clientId?.clientName,
+            startDate: report.startDate,
+            endDate: report.endDate,
+            reportType: report.reportType,
+            approvalStatus: report.approvalStatus,
+            rawDocContent: report.rawDocContent || "<p style='color: orange;'>⚠️ Document content load nahi ho saki.</p>",
+            aiRewrittenContent: report.aiRewrittenContent,
+            ceoPrompt: report.ceoPrompt,
+            emailStatus: report.emailStatus
+        });
     } catch (error) {
+        console.error("getReportPreview error:", error);
         res.status(500).json({ message: error.message });
     }
 };
