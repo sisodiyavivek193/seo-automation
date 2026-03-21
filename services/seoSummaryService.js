@@ -36,9 +36,25 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
 
         // Parse DD-MM-YYYY format
         function parseDocDate(str) {
-            const match = str.match(/(\d{2})-(\d{2})-(\d{4})/);
-            if (!match) return null;
-            return new Date(`${match[3]}-${match[2]}-${match[1]}`);
+            // Try DD-MM-YYYY format first
+            let match = str.match(/(\d{2})-(\d{2})-(\d{4})/);
+            if (match) return new Date(`${match[3]}-${match[2]}-${match[1]}`);
+
+            // Try "D Month YYYY" or "DD Month YYYY" format
+            const months = {
+                january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+                july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
+            };
+
+            match = str.match(/(\d{1,2})\s+(\w+)\s+(\d{4})/i);
+            if (match) {
+                const day = parseInt(match[1]);
+                const month = months[match[2].toLowerCase()];
+                const year = parseInt(match[3]);
+                if (month) return new Date(year, month - 1, day);
+            }
+
+            return null;
         }
 
         let targetHeading = null;
