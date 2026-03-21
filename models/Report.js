@@ -1,3 +1,5 @@
+const mongoose = require("mongoose");  // ✅ ADD THIS LINE!
+
 const reportSchema = new mongoose.Schema({
     clientId: {
         type: mongoose.Schema.Types.ObjectId,
