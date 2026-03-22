@@ -202,8 +202,11 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
             console.log(`🔍 Content:`, sectionHTML.substring(0, 200));
         }
 
-        const result = `
-<!DOCTYPE html>
+        console.log(`\n📊 BEFORE BUILDING HTML:`);
+        console.log(`   sectionHTML length: ${sectionHTML.length}`);
+        console.log(`   sectionHTML preview: ${sectionHTML.substring(0, 100)}`);
+
+        const result = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
@@ -233,6 +236,7 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
 </html>`;
 
         console.log(`\n✅ FINAL: Generated HTML with ${result.length} chars`);
+        console.log(`   Has sectionHTML embedded: ${result.includes(sectionHTML.substring(0, 50))}`);
         return result;
 
     } catch (error) {
