@@ -42,7 +42,7 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
                 return new Date(`${match[3]}-${match[2]}-${match[1]}`);
             }
 
-            // Format 2: "D Month YYYY" or "DD Month YYYY" (e.g., "15 March 2026")
+            // Format 2: "D Month YYYY" or "DD Month YYYY"
             const months = {
                 january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
                 july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
@@ -62,42 +62,39 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
         let targetHeading = null;
         let foundSections = [];
 
-        // Scan all headings and paragraphs
-        $("h1, h2, h3, h4, p, span").each((i, el) => {
+        // ✅ Find sections with date ranges
+        $("*").each((i, el) => {
             const text = $(el).text().trim();
 
-            // Match format: "09-03-2026 to 13-03-2026" or "09-03-2026  to  13-03-2026"
-            if (text.includes(" to ") && text.match(/\d{2}-\d{2}-\d{4}/)) {
+            // Look for date range patterns
+            if (text.includes("to") && text.match(/\d{2}-\d{2}-\d{4}/)) {
+                console.log(`📄 Found date section: ${text.substring(0, 50)}`);
+
                 const parts = text.split(/\s+to\s+/);
-                if (parts.length !== 2) return;
+                if (parts.length >= 2) {
+                    const secStart = parseDocDate(parts[0].trim());
+                    const secEnd = parseDocDate(parts[1].trim());
 
-                const secStart = parseDocDate(parts[0].trim());
-                const secEnd = parseDocDate(parts[1].trim());
+                    if (secStart && secEnd) {
+                        // Check for overlap
+                        const hasOverlap = !(secEnd < reportStart || secStart > reportEnd);
+                        const sameStart =
+                            secStart.getDate() === reportStart.getDate() &&
+                            secStart.getMonth() === reportStart.getMonth() &&
+                            secStart.getFullYear() === reportStart.getFullYear();
 
-                if (!secStart || !secEnd) return;
+                        if (hasOverlap || sameStart) {
+                            targetHeading = el;
+                            console.log(`✅ MATCHED: ${text}`);
+                        }
 
-                foundSections.push({
-                    element: el,
-                    text: text,
-                    secStart,
-                    secEnd
-                });
-
-                console.log(`📄 Found section: ${text}`);
-
-                // ✅ Check for date overlap
-                const hasOverlap = !(secEnd < reportStart || secStart > reportEnd);
-
-                // Or exact start date match
-                const sameStart =
-                    secStart.getDate() === reportStart.getDate() &&
-                    secStart.getMonth() === reportStart.getMonth() &&
-                    secStart.getFullYear() === reportStart.getFullYear();
-
-                if (hasOverlap || sameStart) {
-                    targetHeading = el;
-                    console.log(`✅ MATCHED: ${text}`);
-                    return false; // Stop loop
+                        foundSections.push({
+                            element: el,
+                            text: text,
+                            secStart,
+                            secEnd
+                        });
+                    }
                 }
             }
         });
@@ -105,51 +102,52 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
         let sectionHTML = "";
 
         if (targetHeading) {
-            console.log(`✅ Using matched section: ${$(targetHeading).text().trim()}`);
+            console.log(`✅ Using matched section`);
 
             sectionHTML += $.html(targetHeading);
 
+            // ✅ Get NEXT SIBLINGS (content after heading)
             let next = $(targetHeading).next();
-            while (next.length) {
+            let contentAdded = 0;
+            const MAX_ELEMENTS = 50; // Prevent infinite loops
+
+            while (next.length && contentAdded < MAX_ELEMENTS) {
                 const text = next.text().trim();
 
                 // Stop at next date section
-                if (
-                    text.includes(" to ") &&
-                    text.match(/\d{2}-\d{2}-\d{4}/) &&
-                    (next.is("h1") || next.is("h2") || next.is("h3") || next.is("h4") || next.is("p") || next.is("span"))
-                ) {
-                    console.log(`🛑 Stopping at next section: ${text}`);
+                if (text.includes("to") && text.match(/\d{2}-\d{2}-\d{4}/)) {
+                    console.log(`🛑 Stopping at next section`);
                     break;
                 }
 
                 sectionHTML += $.html(next);
+                contentAdded++;
                 next = next.next();
             }
-        } else {
-            console.log("⚠️ No exact match — trying fallback...");
 
+            console.log(`✅ Extracted ${contentAdded} content elements`);
+        } else {
             if (foundSections.length > 0) {
-                // ✅ Use ONLY latest section (last one)
                 const latestSection = foundSections[foundSections.length - 1];
-                console.log(`✅ Fallback: Using LATEST section ONLY: ${latestSection.text}`);
+                console.log(`✅ Fallback: Using latest section`);
 
                 sectionHTML += $.html(latestSection.element);
 
                 let next = $(latestSection.element).next();
-                while (next.length) {
+                let contentAdded = 0;
+                const MAX_ELEMENTS = 50;
+
+                while (next.length && contentAdded < MAX_ELEMENTS) {
                     const text = next.text().trim();
-                    // Stop at next date section
-                    if (text.includes(" to ") && text.match(/\d{2}-\d{2}-\d{4}/)) {
-                        console.log(`🛑 Stopping at next section`);
+                    if (text.includes("to") && text.match(/\d{2}-\d{2}-\d{4}/)) {
                         break;
                     }
                     sectionHTML += $.html(next);
+                    contentAdded++;
                     next = next.next();
                 }
             } else {
-                // ✅ If no date sections, return empty (don't include full doc)
-                console.log("⚠️ No date sections found — returning empty");
+                console.log("⚠️ No date sections found");
                 sectionHTML = "";
             }
         }
@@ -160,58 +158,33 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
         }
 
         const result = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <meta charset="UTF-8">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            padding: 40px;
-            color: #333;
-            line-height: 1.7;
-            font-size: 14px;
-        }
-        h1, h2, h3, h4 {
-            color: #1a73e8;
-            margin-top: 20px;
-            margin-bottom: 10px;
-        }
-        p { margin-bottom: 10px; }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 16px 0;
-        }
-        td, th {
-            border: 1px solid #ddd;
-            padding: 10px;
-            text-align: left;
-        }
-        th { background: #f0f5ff; font-weight: bold; }
-        tr:nth-child(even) { background: #f9f9f9; }
-        img { max-width: 100%; height: auto; }
-        ul, ol { padding-left: 20px; margin-bottom: 10px; }
-        li { margin-bottom: 4px; }
-        .report-header {
-            border-bottom: 2px solid #1a73e8;
-            padding-bottom: 12px;
-            margin-bottom: 24px;
-        }
-        .report-title {
-            font-size: 20px;
-            font-weight: bold;
-            color: #1a73e8;
-        }
-    </style>
-    </head>
-    <body>
-        <div class="report-header">
-            <div class="report-title">📊 SEO Performance Report</div>
-        </div>
-        ${sectionHTML}
-    </body>
-    </html>`;
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        padding: 40px;
+        color: #333;
+        line-height: 1.7;
+        font-size: 14px;
+    }
+    h1, h2, h3, h4 { color: #1a73e8; margin-top: 20px; }
+    p { margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+    td, th { border: 1px solid #ddd; padding: 10px; text-align: left; }
+    th { background: #f0f5ff; font-weight: bold; }
+    ul, ol { padding-left: 20px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+    <div class="report-header">
+        <h1>📊 SEO Performance Report</h1>
+    </div>
+    ${sectionHTML}
+</body>
+</html>`;
 
         console.log(`✅ Final HTML: ${result.length} chars`);
         return result;
