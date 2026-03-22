@@ -1,26 +1,30 @@
-const mongoose = require("mongoose");  // ✅ ADD THIS LINE!
+const mongoose = require("mongoose");
 
 const reportSchema = new mongoose.Schema({
+
     clientId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Client",
         required: true
     },
 
-    // ✅ NEW: Store Google Docs URL
+    // ✅ Store Google Doc ID for reference
     googleDocId: { type: String, default: "" },
 
+    // ✅ Report period
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
 
     reportDate: { type: Date, default: Date.now },
 
+    // ✅ Report type
     reportType: {
         type: String,
         enum: ["weekly", "monthly"],
         default: "weekly"
     },
 
+    // ✅ Email tracking
     emailStatus: {
         type: String,
         enum: ["pending", "sent", "failed"],
@@ -29,21 +33,36 @@ const reportSchema = new mongoose.Schema({
     emailSentAt: { type: Date, default: null },
     emailError: { type: String, default: "" },
 
-    // ✅ Cached content (fetched from Google Docs automatically)
+    // ✅ PDF path
+    pdfPath: { type: String, default: "" },
+
+    // ✅ Content — Original from Google Doc
     rawDocContent: { type: String, default: "" },
 
-    ceoPrompt: { type: String, default: "" },
-    aiRewrittenContent: { type: String, default: "" },
-
+    // ✅ CEO approval workflow
     approvalStatus: {
         type: String,
         enum: ["pending_review", "ai_rewriting", "awaiting_approval", "approved", "rejected"],
         default: "pending_review"
     },
 
+    // ✅ CEO instructions for AI
+    ceoPrompt: { type: String, default: "" },
+
+    // ✅ AI rewritten content
+    aiRewrittenContent: { type: String, default: "" },
+
+    // ✅ Approval tracking
     approvedAt: { type: Date, default: null },
     rejectedAt: { type: Date, default: null },
-    rejectionReason: { type: String, default: "" }
+    rejectionReason: { type: String, default: "" },
+
+    // ✅ Status
+    status: {
+        type: String,
+        enum: ["generated", "failed"],
+        default: "generated"
+    }
 
 }, { timestamps: true });
 
