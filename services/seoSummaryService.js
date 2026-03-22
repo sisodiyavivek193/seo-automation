@@ -34,13 +34,15 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
 
         console.log(`📅 Report period: ${reportStart.toLocaleDateString('en-IN')} → ${reportEnd.toLocaleDateString('en-IN')}`);
 
-        // Parse DD-MM-YYYY format
+        // Parse multiple date formats
         function parseDocDate(str) {
-            // Try DD-MM-YYYY format first
+            // Format 1: DD-MM-YYYY
             let match = str.match(/(\d{2})-(\d{2})-(\d{4})/);
-            if (match) return new Date(`${match[3]}-${match[2]}-${match[1]}`);
+            if (match) {
+                return new Date(`${match[3]}-${match[2]}-${match[1]}`);
+            }
 
-            // Try "D Month YYYY" or "DD Month YYYY" format
+            // Format 2: "D Month YYYY" or "DD Month YYYY" (e.g., "15 March 2026")
             const months = {
                 january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
                 july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
