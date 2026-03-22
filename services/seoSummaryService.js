@@ -39,7 +39,9 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
             // Format 1: DD-MM-YYYY
             let match = str.match(/(\d{2})-(\d{2})-(\d{4})/);
             if (match) {
-                return new Date(`${match[3]}-${match[2]}-${match[1]}`);
+                const date = new Date(`${match[3]}-${match[2]}-${match[1]}`);
+                console.log(`✅ Parsed date: ${str} → ${date.toLocaleDateString('en-IN')}`);
+                return date;
             }
 
             // Format 2: "D Month YYYY" or "DD Month YYYY"
@@ -53,9 +55,14 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
                 const day = parseInt(match[1]);
                 const month = months[match[2].toLowerCase()];
                 const year = parseInt(match[3]);
-                if (month) return new Date(year, month - 1, day);
+                if (month) {
+                    const date = new Date(year, month - 1, day);
+                    console.log(`✅ Parsed date: ${str} → ${date.toLocaleDateString('en-IN')}`);
+                    return date;
+                }
             }
 
+            console.log(`❌ Failed to parse: ${str}`);
             return null;
         }
 
@@ -66,95 +73,133 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
         $("*").each((i, el) => {
             const text = $(el).text().trim();
 
-            // Look for date range patterns
-            if (text.includes("to") && text.match(/\d{2}-\d{2}-\d{4}/)) {
-                console.log(`📄 Found date section: ${text.substring(0, 50)}`);
+            // ✅ Extract ONLY the date range pattern
+            const dateMatch = text.match(/(\d{2}-\d{2}-\d{4})\s+to\s+(\d{2}-\d{2}-\d{4})/);
 
-                const parts = text.split(/\s+to\s+/);
-                if (parts.length >= 2) {
-                    const secStart = parseDocDate(parts[0].trim());
-                    const secEnd = parseDocDate(parts[1].trim());
+            if (dateMatch) {
+                console.log(`📄 Found date section: ${dateMatch[0]}`);
 
-                    if (secStart && secEnd) {
-                        // Check for overlap
-                        const hasOverlap = !(secEnd < reportStart || secStart > reportEnd);
-                        const sameStart =
-                            secStart.getDate() === reportStart.getDate() &&
-                            secStart.getMonth() === reportStart.getMonth() &&
-                            secStart.getFullYear() === reportStart.getFullYear();
+                // ✅ Parse only the matched dates
+                const secStart = parseDocDate(dateMatch[1]);
+                const secEnd = parseDocDate(dateMatch[2]);
 
-                        if (hasOverlap || sameStart) {
-                            targetHeading = el;
-                            console.log(`✅ MATCHED: ${text}`);
-                        }
+                if (secStart && secEnd) {
+                    console.log(`📅 Section dates: ${secStart.toLocaleDateString('en-IN')} → ${secEnd.toLocaleDateString('en-IN')}`);
 
-                        foundSections.push({
-                            element: el,
-                            text: text,
-                            secStart,
-                            secEnd
-                        });
+                    // Check for overlap
+                    const hasOverlap = !(secEnd < reportStart || secStart > reportEnd);
+                    const sameStart =
+                        secStart.getDate() === reportStart.getDate() &&
+                        secStart.getMonth() === reportStart.getMonth() &&
+                        secStart.getFullYear() === reportStart.getFullYear();
+
+                    console.log(`🔍 Match check: overlap=${hasOverlap}, sameStart=${sameStart}`);
+
+                    if (hasOverlap || sameStart) {
+                        targetHeading = el;
+                        console.log(`✅ MATCHED THIS SECTION!`);
                     }
+
+                    foundSections.push({
+                        element: el,
+                        text: dateMatch[0],
+                        secStart,
+                        secEnd
+                    });
                 }
             }
         });
+
+        console.log(`\n🔍 Total sections found: ${foundSections.length}`);
+        if (foundSections.length > 0) {
+            console.log(`📋 Sections:`, foundSections.map(s => s.text));
+        }
+        console.log(`🎯 Target heading matched: ${!!targetHeading}`);
 
         let sectionHTML = "";
 
         if (targetHeading) {
             console.log(`✅ Using matched section`);
+            console.log(`🔍 Heading element tag: ${targetHeading.name}`);
 
             sectionHTML += $.html(targetHeading);
+            console.log(`✅ Added heading: ${sectionHTML.length} chars`);
 
             // ✅ Get NEXT SIBLINGS (content after heading)
-            let next = $(targetHeading).next();
+            let current = $(targetHeading);
             let contentAdded = 0;
-            const MAX_ELEMENTS = 50; // Prevent infinite loops
+            const MAX_ELEMENTS = 100;
 
-            while (next.length && contentAdded < MAX_ELEMENTS) {
-                const text = next.text().trim();
-
-                // Stop at next date section
-                if (text.includes("to") && text.match(/\d{2}-\d{2}-\d{4}/)) {
-                    console.log(`🛑 Stopping at next section`);
+            while (contentAdded < MAX_ELEMENTS) {
+                current = current.next();
+                if (!current.length) {
+                    console.log(`🛑 No more siblings`);
                     break;
                 }
 
-                sectionHTML += $.html(next);
-                contentAdded++;
-                next = next.next();
+                const text = current.text().trim();
+
+                // Stop at next date section
+                if (text.match(/\d{2}-\d{2}-\d{4}\s+to\s+\d{2}-\d{2}-\d{4}/)) {
+                    console.log(`🛑 Found next section, stopping`);
+                    break;
+                }
+
+                const html = $.html(current);
+                if (html && html.length > 0) {
+                    sectionHTML += html;
+                    contentAdded++;
+                    console.log(`✅ Added element ${contentAdded}: ${text.substring(0, 40)}`);
+                }
             }
 
-            console.log(`✅ Extracted ${contentAdded} content elements`);
+            console.log(`✅ Total elements extracted: ${contentAdded}`);
+            console.log(`📊 Total sectionHTML: ${sectionHTML.length} chars`);
+
         } else {
+            console.log(`⚠️ No matched section found, using fallback`);
+
             if (foundSections.length > 0) {
                 const latestSection = foundSections[foundSections.length - 1];
-                console.log(`✅ Fallback: Using latest section`);
+                console.log(`✅ Fallback: Using LATEST section: ${latestSection.text}`);
 
                 sectionHTML += $.html(latestSection.element);
+                console.log(`✅ Added heading: ${sectionHTML.length} chars`);
 
-                let next = $(latestSection.element).next();
+                let current = $(latestSection.element);
                 let contentAdded = 0;
-                const MAX_ELEMENTS = 50;
+                const MAX_ELEMENTS = 100;
 
-                while (next.length && contentAdded < MAX_ELEMENTS) {
-                    const text = next.text().trim();
-                    if (text.includes("to") && text.match(/\d{2}-\d{2}-\d{4}/)) {
+                while (contentAdded < MAX_ELEMENTS) {
+                    current = current.next();
+                    if (!current.length) {
+                        console.log(`🛑 No more siblings in fallback`);
                         break;
                     }
-                    sectionHTML += $.html(next);
-                    contentAdded++;
-                    next = next.next();
+
+                    const text = current.text().trim();
+                    if (text.match(/\d{2}-\d{2}-\d{4}\s+to\s+\d{2}-\d{2}-\d{4}/)) {
+                        console.log(`🛑 Found next section in fallback`);
+                        break;
+                    }
+
+                    const html = $.html(current);
+                    if (html && html.length > 0) {
+                        sectionHTML += html;
+                        contentAdded++;
+                    }
                 }
+
+                console.log(`✅ Fallback: extracted ${contentAdded} elements`);
+                console.log(`📊 Final sectionHTML: ${sectionHTML.length} chars`);
             } else {
-                console.log("⚠️ No date sections found");
-                sectionHTML = "";
+                console.log("❌ NO DATE SECTIONS FOUND AT ALL");
             }
         }
 
-        if (!sectionHTML) {
-            console.warn("⚠️ No section content extracted");
-            return "";
+        if (!sectionHTML || sectionHTML.length < 50) {
+            console.warn(`⚠️ WARNING: sectionHTML is empty or too short (${sectionHTML.length} chars)`);
+            console.log(`🔍 Content:`, sectionHTML.substring(0, 200));
         }
 
         const result = `
@@ -170,12 +215,13 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
         line-height: 1.7;
         font-size: 14px;
     }
-    h1, h2, h3, h4 { color: #1a73e8; margin-top: 20px; }
+    h1, h2, h3, h4 { color: #1a73e8; margin-top: 20px; margin-bottom: 10px; }
     p { margin-bottom: 10px; }
     table { width: 100%; border-collapse: collapse; margin: 16px 0; }
     td, th { border: 1px solid #ddd; padding: 10px; text-align: left; }
     th { background: #f0f5ff; font-weight: bold; }
     ul, ol { padding-left: 20px; margin-bottom: 10px; }
+    li { margin-bottom: 5px; }
 </style>
 </head>
 <body>
@@ -186,11 +232,12 @@ async function getLatestWeekHTML(docId, startDate, endDate) {
 </body>
 </html>`;
 
-        console.log(`✅ Final HTML: ${result.length} chars`);
+        console.log(`\n✅ FINAL: Generated HTML with ${result.length} chars`);
         return result;
 
     } catch (error) {
         console.error(`❌ getLatestWeekHTML error:`, error.message);
+        console.error(`Stack:`, error.stack);
         return "";
     }
 }
